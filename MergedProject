@@ -1,0 +1,145 @@
+#Imports
+import breezypythongui
+import os
+import re
+import pandas as pd
+
+master = []
+current_header = {'court_date': None, 'time': None,'court_num': None}
+report_header = {'run_date': None, 'page': None}
+
+# Holds Def Name, File Number, Attorney, etc.
+current_data = {'no':None,'file':None,'number':None,'def_name':None,'complaintant':None,'attorney':None,'cont':None}
+# Holds Bond info
+current_data2 = {'bond':None,'bond_type':None}
+
+try:    
+    if os.path.exists('test.xlsx'):
+        os.remove('test.xlsx')
+except PermissionError:
+    print("Error: Please close the Excel file test.xlsx before running this script.")
+
+# --- RegEx Pattern Definitions ---
+header_pattern = r"RUN DATE:\s+(\d+\/\d+\/\d+).*PAGE\s+(\d+)"
+sh_pattern = r"COURT DATE:\s+(\d+\/\d+\/\d+).*TIME:\s+(\d+:\d+\s+\w+).*COURTROOM NUMBER:\s+(\w+)"
+
+# 1. Case Info (Name, ID, Attorney)
+data_pattern = r"(\d+)\s+(\w+)\s+(\d+)\s+(\S+)\s+(\S+)\s+ATTY:(\S+)\s+(\d+)+"
+
+# 2. Bond Info
+data2_pattern = r"BOND:\s+\$?([\d]+)?\s*([A-Z]{3})"
+
+# 3. NEW PATTERN: Charges, Plea, Verdict (The "Second Line")
+# Looks for (T), (I), or (M), followed by text, then PLEA:, then VER:
+charge_pattern = r"(\([TIM]\).*?)\s+PLEA:(.*?)\s+VER:(.*)"
+
+#Open and Read the text file
+textfile = input("Input The File Name (.txt): ")
+try:
+    with open(textfile,"r") as f:      
+        content = f.read().splitlines() 
+
+except(FileNotFoundError):
+    print("File Not Found")
+    content = []
+
+#Processes the header, returns header info
+def process_header():
+    print("processing header")
+
+def parseData():
+    # Reset bond info at start
+    current_data2['bond'] = None
+    current_data2['bond_type'] = None
+
+    for line in content:
+        # 1. Check Header
+        header_match = re.search(header_pattern, line)
+        if header_match:
+            report_header['run_date'] = header_match.group(1)
+            report_header['page'] = header_match.group(2)
+            # print(report_header)
+
+        # 2. Check Court Date/Time
+        sh_match = re.search(sh_pattern,line)
+        if sh_match:
+            current_header['court_date'] = sh_match.group(1)
+            current_header['time'] = sh_match.group(2)
+            current_header['court_num'] = sh_match.group(3)
+            # print(current_header)
+
+        # 3. Check Bond Info
+        data2_match = re.search(data2_pattern,line)
+        if data2_match:
+            # Group 1 might be None if no dollar amount, Group 2 is type (CSH/SEC)
+            current_data2['bond'] = data2_match.group(1) if data2_match.group(1) else "0"
+            current_data2['bond_type'] = data2_match.group(2)
+            # print(f"Bond found: {current_data2}")
+
+        # 4. Check Case Info (Defendant Name, File Num, etc)
+        data_match = re.search(data_pattern,line)
+        if data_match:
+            current_data['no'] = data_match.group(1)
+            current_data['file'] = data_match.group(2)
+            current_data['number'] = data_match.group(3)
+            current_data['def_name'] = data_match.group(4)
+            current_data['complaintant']= data_match.group(5)
+            current_data['attorney']= data_match.group(6)
+            current_data['cont']= data_match.group(7)
+            # NOTE: We do NOT append to master here anymore. 
+            # We wait until we find the CHARGE line below.
+            
+            # Reset bond for new person if not found yet
+            if not data2_match: 
+                current_data2['bond'] = None
+                current_data2['bond_type'] = None
+
+        # 5. NEW: Check Charge Info (This triggers the Save)
+        charge_match = re.search(charge_pattern, line)
+        if charge_match:
+            # Now we have everything! Case info (from step 4) + Charge info (from step 5)
+            
+            row = {'Run Date':report_header['run_date'],
+                   'Page':report_header['page'],
+                   'Court Date':current_header['court_date'],
+                   'Time': current_header['time'],
+                   'Courtroom': current_header['court_num'],
+                   'Case Number':current_data['no'],
+                   'File': current_data['file'],
+                   'Number':current_data['number'],
+                   'Defendant Name':current_data['def_name'],
+                   'Complaintant':current_data['complaintant'],
+                   'Attorney':current_data['attorney'],
+                   'Continuances':current_data['cont'],
+                   'Bond': current_data2['bond'],
+                   'Bond Type': current_data2['bond_type'],
+                   # --- NEW COLUMNS ---
+                   'Charge': charge_match.group(1).strip(),
+                   'Plea': charge_match.group(2).strip(),
+                   'Verdict': charge_match.group(3).strip()
+                   }
+            
+            master.append(row)
+            # print(f"Saved row for {current_data['def_name']}")
+        
+    # Format Output to Excel
+    if master:
+        df = pd.DataFrame(master)
+        # Added 'Charge', 'Plea', 'Verdict' to the column list
+        cols = ['Court Date', 'Time', 'Courtroom', 'Case Number', 'File', 
+            'Number', 'Defendant Name', 'Complaintant', 'Attorney', 'Continuances',
+            'Bond','Bond Type', 'Charge', 'Plea', 'Verdict']
+        
+        # Reorder columns (safety check in case one is missing)
+        df = df.reindex(columns=cols)
+        
+        df.to_excel('test.xlsx',sheet_name='Data',index=False)
+        print("Success! Data exported to test.xlsx")
+    else:
+        print("No data found to export.")
+
+def main():
+    parseData()
+
+if __name__ == '__main__':
+    main()
