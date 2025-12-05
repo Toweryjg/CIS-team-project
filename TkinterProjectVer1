@@ -1,0 +1,205 @@
+"""
+Court Data Processing Application (Standard Tkinter Version)
+Converts court .txt documents to .xlsx format
+By Connor Soucey and Jared Towery
+"""
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
+import re
+import pandas as pd
+
+# --- RegEx Pattern Definitions ---
+header_pattern = r"RUN DATE:\s+(\d+\/\d+\/\d+).*PAGE\s+(\d+)"
+sh_pattern = r"COURT DATE:\s+(\d+\/\d+\/\d+).*TIME:\s+(\d+:\d+\s+\w+).*COURTROOM NUMBER:\s+(\w+)"
+data_pattern = r"(\d+)\s+(\w+\s+\d+)\s+(\S+)\s+(\S+)\s+ATTY:(\S+)\s+(\d+)+"
+data2_pattern = r"BOND:\s+(\$\d+)?\s*([A-Z]{3})"
+data3_pattern = r"(\([TIM]\).*?)\s+PLEA:(.*?)\s+VER:(.*)"
+data4_pattern = r"CLS:(.*?)\s+P:(.*?)\s+L:(.*?)\s+JUDGMENT:(.*)"
+fingerprint_pattern = r"DEFENDANT NEEDS TO BE FINGERPRINTED"
+
+class CourtApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Court Data Processor")
+        self.root.geometry("600x250")
+
+        # --- UI SETUP ---
+        
+        # Title Label
+        tk.Label(root, text="Select Court Text Files (Up to 3)", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=3, pady=10)
+
+        # File 1
+        tk.Label(root, text="File 1:").grid(row=1, column=0, padx=10, sticky="e")
+        self.entry1 = tk.Entry(root, width=50)
+        self.entry1.grid(row=1, column=1, padx=5)
+        tk.Button(root, text="Browse", command=lambda: self.browse_file(self.entry1)).grid(row=1, column=2, padx=5)
+
+        # File 2
+        tk.Label(root, text="File 2:").grid(row=2, column=0, padx=10, sticky="e")
+        self.entry2 = tk.Entry(root, width=50)
+        self.entry2.grid(row=2, column=1, padx=5)
+        tk.Button(root, text="Browse", command=lambda: self.browse_file(self.entry2)).grid(row=2, column=2, padx=5)
+
+        # File 3
+        tk.Label(root, text="File 3:").grid(row=3, column=0, padx=10, sticky="e")
+        self.entry3 = tk.Entry(root, width=50)
+        self.entry3.grid(row=3, column=1, padx=5)
+        tk.Button(root, text="Browse", command=lambda: self.browse_file(self.entry3)).grid(row=3, column=2, padx=5)
+
+        # Process Button
+        tk.Button(root, text="PROCESS DATA", bg="green", fg="white", font=("Arial", 10, "bold"), command=self.process_data).grid(row=4, column=0, columnspan=3, pady=20)
+
+    def browse_file(self, entry_field):
+        """Opens file dialog and inserts path into the entry box"""
+        filename = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
+        if filename:
+            entry_field.delete(0, tk.END)
+            entry_field.insert(0, filename)
+
+    def process_data(self):
+        # 1. Gather files
+        files = []
+        if self.entry1.get(): files.append(self.entry1.get())
+        if self.entry2.get(): files.append(self.entry2.get())
+        if self.entry3.get(): files.append(self.entry3.get())
+
+        if not files:
+            messagebox.showerror("Error", "Please select at least one file.")
+            return
+
+        # 2. Cleanup old Excel
+        try:    
+            if os.path.exists('Court_Output.xlsx'):
+                os.remove('Court_Output.xlsx')
+        except PermissionError:
+            messagebox.showerror("Error", "Please close 'Court_Output.xlsx' before running.")
+            return
+
+        # 3. Processing Logic
+        master = []
+        current_header = {'court_date': None, 'time': None,'court_num': None}
+        report_header = {'run_date': None, 'page': None}
+        current_data = {'no':None,'file_number':None,'def_name':None,'complainant':None,'attorney':None,'cont':None}
+        current_data2 = {'bond':None,'bond_type':None}
+
+        for textfile in files:
+            try:
+                with open(textfile, "r") as f:      
+                    content = f.read().splitlines()
+            except FileNotFoundError:
+                print(f"Skipping {textfile}")
+                continue
+
+            current_data2 = {'bond':None,'bond_type':None}
+
+            for line in content:
+                # Header
+                header_match = re.search(header_pattern, line)
+                if header_match:
+                    report_header['run_date'] = header_match.group(1)
+                    report_header['page'] = header_match.group(2)
+
+                # Page Header
+                sh_match = re.search(sh_pattern,line)
+                if sh_match:
+                    current_header['court_date'] = sh_match.group(1)
+                    current_header['time'] = sh_match.group(2)
+                    current_header['court_num'] = sh_match.group(3)
+
+                # Case Data
+                data_match = re.search(data_pattern,line)
+                if data_match:
+                    current_data['no'] = data_match.group(1)
+                    current_data['file_number'] = data_match.group(2)
+                    current_data['def_name'] = data_match.group(3)
+                    current_data['complainant']= data_match.group(4)
+                    current_data['attorney']= data_match.group(5)
+                    current_data['cont']= data_match.group(6)
+
+                    row = {'Run Date':report_header['run_date'],
+                           'Page':report_header['page'],
+                           'Court Date':current_header['court_date'],
+                           'Time': current_header['time'],
+                           'Courtroom': current_header['court_num'],
+                           'Case Number':current_data['no'],
+                           'File Number': current_data['file_number'],
+                           'Defendant Name':current_data['def_name'],
+                           'Complaintant':current_data['complainant'],
+                           'Attorney':current_data['attorney'],
+                           'Continuances':current_data['cont'],
+                           'Needs Fingerprinted': 'No',
+                           'Charge': None, 'Plea': None, 'Verdict': None,
+                           'Bond': None, 'Bond Type': None,
+                           'CLS': None, 'P': None, 'L': None, 'Judgment': None
+                           }
+                    master.append(row)
+                    current_data2 = {'bond':None,'bond_type':None}
+
+                # Fingerprint
+                if re.search(fingerprint_pattern, line):
+                    if master: master[-1]['Needs Fingerprinted'] = 'Yes'
+
+                # Bond
+                data2_match = re.search(data2_pattern,line)
+                if data2_match:
+                    current_data2['bond'] = data2_match.group(1) if data2_match.group(1) else ""
+                    current_data2['bond_type'] = data2_match.group(2)
+                    if master:
+                        master[-1]['Bond'] = current_data2['bond']
+                        master[-1]['Bond Type'] = current_data2['bond_type']
+
+                # Charge
+                data3_match = re.search(data3_pattern,line)
+                if data3_match:
+                    new_charge = data3_match.group(1).strip()
+                    new_plea = data3_match.group(2).strip()
+                    new_verdict = data3_match.group(3).strip()
+
+                    if master:
+                        last_row = master[-1]
+                        if last_row['Charge'] is None:
+                            last_row['Charge'] = new_charge
+                            last_row['Plea'] = new_plea
+                            last_row['Verdict'] = new_verdict
+                        else:
+                            row_copy = last_row.copy()
+                            row_copy['Charge'] = new_charge
+                            row_copy['Plea'] = new_plea
+                            row_copy['Verdict'] = new_verdict
+                            row_copy['CLS'] = None; row_copy['P'] = None; row_copy['L'] = None; row_copy['Judgment'] = None
+                            master.append(row_copy)
+
+                # Judgment
+                data4_match = re.search(data4_pattern, line)
+                if data4_match and master:
+                    master[-1]['CLS'] = data4_match.group(1).strip()
+                    master[-1]['P'] = data4_match.group(2).strip()
+                    master[-1]['L'] = data4_match.group(3).strip()
+                    master[-1]['Judgment'] = data4_match.group(4).strip()
+
+        # 4. Export
+        if master:
+            df = pd.DataFrame(master)
+            cols = ['Court Date', 'Time', 'Courtroom', 'Case Number', 'File Number', 
+                    'Defendant Name', 'Complaintant', 'Attorney', 'Continuances',
+                    'Needs Fingerprinted', 'Bond','Bond Type',
+                    'Charge','Plea','Verdict', 'CLS', 'P', 'L', 'Judgment']
+            df = df.reindex(columns=cols)
+            df.to_excel('Court_Output.xlsx', sheet_name='Data', index=False)
+            messagebox.showinfo("Success", f"Data Processed Successfully!\nRows: {len(master)}\nSaved to Court_Output.xlsx")
+            
+            # --- AUTO OPEN EXCEL ---
+            try:
+                os.startfile('Court_Output.xlsx')
+            except Exception as e:
+                print(f"Could not open Excel automatically: {e}")
+                
+        else:
+            messagebox.showwarning("Warning", "No data found in the selected files.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = CourtApp(root)
+    root.mainloop()
